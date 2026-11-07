@@ -246,6 +246,8 @@ For image input, download a **+ vision** bundle and select it in Server Mode. It
 
 The `toolbox_compatible: false` field in `toolboxes.json` selects the shared server-only image lifecycle. It defaults to `true` for existing toolboxes. A server-only record must declare interactive support unavailable and server support available or experimental.
 
+Halogen has no web UI of its own; the API is the only interface. `scripts/halogen_open_webui.py` puts Open WebUI in front of a fixed local model endpoint and adds a stable OpenAI-compatible `local-model` alias on port 8081. `scripts/halogen_chat.sh` waits for any loaded model, with no Qwen/DeepSeek-specific ID required, and manages both front ends while retaining existing WebUI accounts and API keys. Keep each backend on `127.0.0.1:8731` when switching. See [model-independent Open WebUI](docs/HALOGEN_CHAT_UI.md) and [the reboot runbook](docs/HALOGEN_REBOOT_RUNBOOK.md).
+
 ## Platforms and catalog scope
 
 | Platform | Current catalog |

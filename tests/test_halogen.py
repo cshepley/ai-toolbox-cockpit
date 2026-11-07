@@ -1,4 +1,5 @@
 import copy
+import grp
 import json
 import runpy
 import subprocess
@@ -249,8 +250,13 @@ class HalogenTests(TestCase):
                                               for item in bundle["files"]])
                     self.assertIn("--ipc=host", command)
                     self.assertIn("memlock=-1:-1", command)
-                    self.assertEqual("keep-groups" in command, engine == "podman")
-                    self.assertEqual("render" in command, engine == "docker")
+                    if engine == "podman":
+                        self.assertIn("keep-groups", command)
+                    else:
+                        self.assertIn(str(grp.getgrnam("video").gr_gid), " ".join(command))
+                        self.assertIn(str(grp.getgrnam("render").gr_gid), " ".join(command))
+                        self.assertNotIn("--group-add=video", " ".join(command))
+                        self.assertNotIn("--group-add=render", " ".join(command))
                     self.assertNotIn("HALOGEN_DOWNLOAD", " ".join(command))
                     self.assertIn(CONTAINER_NAME, command)
 

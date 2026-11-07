@@ -1,5 +1,6 @@
 """Pure single-container Halogen launch builder; retain the shipped entrypoint."""
 
+import grp
 import ipaddress
 from pathlib import Path
 
@@ -9,6 +10,33 @@ from .model_manager import get_bundle, incomplete_files
 
 
 CONTAINER_NAME = "ai-toolbox-cockpit-halogen-server"
+
+
+def _docker_group_args(arguments: list[str]) -> list[str]:
+    """Convert named host GPU groups to numeric IDs for Docker's daemon."""
+    resolved: list[str] = []
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--group-add" and index + 1 < len(arguments):
+            value = arguments[index + 1]
+            try:
+                resolved.extend(["--group-add", str(grp.getgrnam(value).gr_gid)])
+            except KeyError:
+                resolved.extend(["--group-add", value])
+            index += 2
+            continue
+        if argument.startswith("--group-add="):
+            value = argument.split("=", 1)[1]
+            try:
+                resolved.append(f"--group-add={grp.getgrnam(value).gr_gid}")
+            except KeyError:
+                resolved.append(argument)
+            index += 1
+            continue
+        resolved.append(argument)
+        index += 1
+    return resolved
 
 
 def _validated_engine_args(arguments: list[str]) -> list[str]:
@@ -80,9 +108,11 @@ def build_server_cmd(
         environment["HALOGEN_NGRAM_TABLE"] = f"/models/{bundle['ngram_table']}"
     if bundle.get("vision_tower"):
         environment["HALOGEN_VISION_TOWER"] = f"/models/{bundle['vision_tower']}"
+    prepared = upgrade_groups_for_podman(engine, _validated_engine_args(engine_args))
+    if engine == "docker":
+        prepared = _docker_group_args(prepared)
     command = [engine, "run", "--rm", "-it", "--name", CONTAINER_NAME,
-               *upgrade_groups_for_podman(engine, _validated_engine_args(engine_args)),
-               "--network=none", "--cap-drop=NET_ADMIN", "--cap-drop=NET_RAW",
+               *prepared, "--network=none", "--cap-drop=NET_ADMIN", "--cap-drop=NET_RAW",
                "--security-opt", "no-new-privileges"]
     for item in bundle["files"]:
         source = (directory / item["path"]).resolve(strict=True)
