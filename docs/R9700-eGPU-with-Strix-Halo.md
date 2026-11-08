@@ -12,7 +12,7 @@ already in `docs/` describes the project's own multi-card machine, not this box.
 | Item | Details | Constraints it imposes |
 | --- | --- | --- |
 | **Host** | Minisforum MS-S1 Max, Ryzen AI Max+ 395, **128 GB unified**, stock | Internal M.2 slot is electrical **PCIe 4.0 x4**; 320 W PSU behind a 160 W APU → external attach is forced |
-| **GPU** | AMD **Radeon AI PRO R9700 32 GB** (RDNA4, `gfx1201`, ~640 GB/s, 300 W) — Micro Center, pickup tomorrow | Not a 9070 XT: 32 GB VRAM, pro SKU, 300 W sustained. Community posts routinely conflate the two — separate them |
+| **GPU** | AMD **Radeon AI PRO R9700 32 GB** (RDNA4, `gfx1201`, ~640 GB/s/card, 300 W) — Micro Center, pickup tomorrow. A second card makes this **64 GB VRAM / ~1280 GB/s aggregate** | Not a 9070 XT: 32 GB VRAM, pro SKU, 300 W sustained. Community posts routinely conflate the two — separate them. Note that capacity doubles cleanly with a 2nd card but per-stream bandwidth does not — see report §2 |
 | **Dock** | Minisforum **Degu 2** (OCuLink SFF-8612 **and** Thunderbolt 4 / USB4 in one enclosure) | One box, two interconnects → a natural A/B test. Assess whether it feeds and cools 300 W |
 | **Software goal** | **Agentic coding**: GitHub Copilot + free/open harnesses (Continue, Cline, Aider, llama.cpp server, LM Studio, Open WebUI) | I want a capable **free open-weight model working alongside Copilot**, with tool calling |
 | **Budget** | **No new RAM, CPUs, or GPUs** in the near future | Every recommendation must work with 128 GB unified + 32 GB VRAM + wires I already own. Anything needing a purchase = "FYI" only |

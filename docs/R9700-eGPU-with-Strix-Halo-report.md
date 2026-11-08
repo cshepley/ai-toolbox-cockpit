@@ -61,7 +61,7 @@ Inference here is memory-bandwidth-bound, not compute-bound: `tok/s ≈ bandwidt
 ```
 Effective memory bandwidth (GB/s, higher = faster decode)
 
-R9700 GDDR6 (32 GB)          640  ████████████████████████████████████  [vendor]
+R9700 GDDR6 (32 GB)          640  ████████████████████████████████████  [vendor]  <- per card
 Strix LPDDR5X-8000 (128 GB)  ~230 ████████████                          [measured ~230, spec 256]
 host → iGPU unified path      ~80  ████                                  [measured, L1]
 OCuLink PCIe 4.0 x4          ~7.9 ██                                    [vendor]
@@ -85,6 +85,44 @@ per-token attention path then crosses the OCuLink x4 link every step" **[measure
 token — bandwidth-bound, one device per token. Prefill is a big matmul — parallelism actually helps. Wendell's
 pp512 on Qwen3.6-35B-A3B: **iGPU 1,182 → 2× R9700 2,606 → 3-device 1,420 t/s** **[measured]**. For agentic
 coding, where you re-send a large prompt every turn, this matters more than it looks.
+
+### Those bars are *per card* — two R9700s is 64 GB, not 1280 GB/s of decode
+
+The 640 GB/s figure belongs to one card, so it is worth being exact about what a second one doubles, because
+the two answers are opposite:
+
+| Bought by a 2nd R9700 | Doubles? | Why |
+| --- | --- | --- |
+| **VRAM capacity: 32 → 64 GB** | **yes, cleanly** | nothing to coordinate; `gpt-oss-120b` Q4 (63.4 GiB) goes from "does not fit one card" to 100.4 t/s **[measured, L1]** |
+| **Concurrency: 2 agents at full speed** | **yes, ~2.0×** | two servers, two cards, zero coordination |
+| **Prefill on a split model** | **yes, ~2.2×** | matmuls parallelize (pp512 1,182 → 2,606) **[measured, L1]** |
+| **Decode of one stream** | **no, ~0×** | one device is active per token, so per-token bytes still arrive at one card's 640 GB/s |
+
+So the honest shorthand is: **two cards buy you a bigger model and a second agent, not a faster agent.** The
+1,280 GB/s number is real only as an *aggregate* across simultaneous work — it is unreachable by a single token
+stream, which is why §Stage 3 lists "speed on a model that already fits 32 GB" as **~0×**.
+
+There is receipts for that too. `gpt-oss-120b` reads ~2.87 GB of active weights per token, so 1,280 GB/s
+predicts ~446 t/s; Wendell measured **100.4** **[measured, L1]**. That is ~23 % efficiency. The iGPU's 56.5 t/s
+against its own ~80 t/s prediction is ~70 %, and the iGPU alone on Qwen3-235B is ~50 % of its prediction. **A split model gets barely a fifth of the bandwidth it nominally
+has**, because every token now waits on the slower of two paths plus host coordination — and RCCL has no
+`gfx1151` kernels to fix it with **[measured, L1]**. The two-independent-servers design in §7a is the answer:
+it reaches ~100 % of each card's bandwidth by never sharing a token.
+
+That makes capacity the ladder to think in, and this box has four rungs:
+
+```
+32 GB   one R9700 ........ fast tier: Qwen3.8-27B Q4 at 45-50 t/s
+64 GB   two R9700s ....... gpt-oss-120b Q4: 100.4 t/s
+128 GB  iGPU alone ....... same gpt-oss-120b at 56.5 t/s; Qwen3-235B-A22B Q3 (~101 GB) at 10-15 after the TTM raise
+160 GB+ two boxes ........ only via llama.cpp RPC, and only at 10-15 t/s
+```
+
+Note the middle two rows carefully: **your iGPU already runs every model the 64 GB rung can run**, because 64 GB
+⊂ 128 GB. What a second card buys at that size is *speed* — 100.4 vs 56.5 t/s on `gpt-oss-120b` — plus the
+prefill and concurrency wins above. It is not access. This is the same conclusion §9d reached from the
+purchasing side, and it is why the plan's own budget line says no new GPUs: the second card is a
+speed-and-throughput purchase, not a capability one. **[measured, L1]**
 
 ### Link speed: what it actually costs you
 
