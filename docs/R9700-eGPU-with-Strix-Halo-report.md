@@ -983,6 +983,72 @@ has somewhere to put five of them. If you want a cluster partner with storage, t
 **128 GB** SKU, since a 64 GB peer adds the smallest possible increment (§9b/§9e). If you want inference speed,
 it's the card.
 
+### 9g. "Can I reserve ~128 GB combined as VRAM and run my VMs on the rest?"
+
+Short answer: **not as one pool — but you can get the outcome you actually want**, with a per-box budget.
+
+**Why a combined pool is impossible on this hardware.** Three independent walls:
+
+1. **No CXL, no memory-side interconnect.** The 395 exposes **16 lanes of PCIe 4.0** and USB4 **[vendor, AMD
+   spec]**, and Strix Halo has no CXL memory-expansion controller, so its I/O is PCIe/USB only. There is no bus on
+   which a second box's DRAM could appear in your CPU's address space at DRAM-like latency — and that is precisely
+   the feature this idea requires.
+2. **llama.cpp RPC is not memory pooling.** It is **model sharding**: the master asks a peer to evaluate
+   specific tensors on its device. Peer memory is reachable *by that one process, for that one model*. A Proxmox
+   VM on box 1 **cannot allocate from box 2's RAM**, no matter how you configure it.
+3. **Proxmox memory is strictly local.** A VM's memory comes from its own node's host pool. Which also means
+   *cross-node VM migration would need the peer's memory too* — so a model spread over RPC **cannot live-migrate**
+   either. Clustered inference and cluster-managed VMs are two different clusters.
+
+**What you can actually build:** two independent GPU pools, sized so each box still has room for its VMs.
+
+| Node | RAM | `ttm` GPU pool | Left for Proxmox host + VMs |
+| --- | ---: | ---: | ---: |
+| MS-S1 Max (master) | 128 GB | **110 GB** | **~18 GB** → host 2–3 GB + desktop VM 8–12 GB |
+| Expander (`rpc-server -c`) | 64 GB | **50 GB** | **~14 GB** → host + a small VM or two |
+| **Model-usable, sharded** | 192 GB | **~160 GB** | — |
+
+Two caveats on that table, both of which bite:
+
+- **The TTM limit is a cap, not a reservation — but a loaded model makes it one anyway.** AMD is clear that GTT
+  allocations are dynamic and reclaimable **[vendor]**, so idle memory is available to the host. Once llama.cpp
+  has a 100 GB model resident, though, that memory is effectively pinned: **turn ballooning off on the LLM VM**
+  (§10 step 3) or the hypervisor will try to reclaim from a GPU-mapped model. Budget the VM side for the
+  *loaded* case, not the idle one.
+- **Don't run the model-heavy tier and a fat desktop VM on the same box.** 110 + 12 + 3 = 125 of 128 GB leaves no
+  page-cache headroom for model loading, which is exactly when the box needs it. If you want a comfortable
+  desktop VM, **that's the real argument for the second box** — not for its 50 GB of GPU memory, but because it
+  gives your desktop VM somewhere to live that isn't competing with a resident 110 GB model.
+
+**Does the extra ~60 GB of far-node memory even help?** It's the right question to ask before buying. At 101 GB
+(Qwen3-235B Q3_K_S) the peer holds ~1 GB — **your own box fits it after the TTM fix, so the peer contributes
+nothing**. It starts mattering around **130 GB+** (GLM-4.6 / MiniMax-M2 class), where ~30 GB lands on the peer.
+But at that size you're paying for a tier that runs ~10–15 t/s, and the model is spread across two links per
+token, so prefill degrades exactly when agentic coding needs it most (§9e). **Size the second box to the model
+tier you'll actually run interactively — which, for coding, is the tier one 128 GB box already covers.**
+
+```mermaid
+flowchart LR
+  subgraph B1["MS-S1 Max 128 GB - Proxmox"]
+    direction TB
+    G1["GPU pool 110 GB<br/>llama-server MASTER<br/>R9700 + iGPU"]
+    H1["host ~3 GB"]
+    V1["desktop VM 8-12 GB<br/>VS Code / Copilot"]
+  end
+  subgraph B2["Expander 64 GB - single purpose"]
+    direction TB
+    G2["GPU pool ~50 GB<br/>rpc-server -c"]
+    H2["host + small VMs ~14 GB"]
+  end
+  G1 -- "--rpc peer:50052<br/>shard, not a pool" --> G2
+  V1 -- "OpenAI endpoint" --> G1
+```
+
+**The design that follows from this:** run the expander as a **single-purpose `rpc-server` node with no fat
+tenants on it**, and keep your desktop VM on the 128 GB box where the host's own memory is predictable. A box
+whose GPU pool is being borrowed by a remote master is not a good host for anything else — its memory pressure
+is now decided by someone else's model.
+
 ## 10. Recommended system design (your Proxmox question)
 
 **Yes — do the Proxmox move tonight, before the card arrives.** It solves your real deployment failure (no
