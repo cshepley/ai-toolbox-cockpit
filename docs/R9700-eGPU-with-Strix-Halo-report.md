@@ -50,6 +50,10 @@ Every number is tagged: **[measured]** = someone published a measurement · **[v
    to each node's ~230 GB/s no matter how fast your interconnect is (§9e), so at the same $2,199 as a diskless
    GMKtec EVO-X2 64 GB "compute expander," **keep the R9700**: the expander buys a slow (10–15 t/s) bigger-model
    tier, the card buys 45–50 t/s on the tier you actually use (§9d).
+10. **Old used cards are not slower at decode — V100 is 1.41× the R9700 (900 vs 640 GB/s), and two V100 SXM2 on a
+    modern NVLink carrier is the only 64 GB option here where tensor parallel actually works.** Still not worth
+    buying: Volta is frozen in CUDA 12.8, has no mainstream FlashAttention (which hits long-prompt prefill, your
+    exact workload), and used 32 GB cards now list $800–999 — about what you paid new for a supported card (§9h).
 
 ---
 
@@ -1087,6 +1091,131 @@ tenants on it**, and keep your desktop VM on the 128 GB box where the host's own
 whose GPU pool is being borrowed by a remote master is not a good host for anything else — its memory pressure
 is now decided by someone else's model.
 
+### 9h. Older used cards: 2× V100 32 GB vs one 48 GB card vs the R9700
+
+You already had this analysis — [`V100_EGPU_DECISION_REPORT.md`](../V100_EGPU_DECISION_REPORT.md) was written
+before the R9700 was bought, and it concluded a single V100 32 GB was the cheapest 900 GB/s available. That was
+right then. This section updates it now that the card is purchased, and **corrects one claim in it that new
+evidence has outdated.**
+
+#### The correction: your "slower" assumption is backwards
+
+The repo doc says V100 is the cheapest high-bandwidth option, but nowhere states it plainly, so say it here:
+
+**A Tesla V100 is faster at decode than the R9700 you just bought.** 900 GB/s (HBM2) vs 640 GB/s (GDDR6) —
+**1.41×**. The SXM2 variant is 1,130 GB/s, or **1.77×**. The physics formula is the same one used throughout this
+report, and the one direct head-to-head aggregation found **[observed, aggregator]** shows the same direction:
+on Qwen3.8-Flash-Next a **2× V100 pair measured 96.1 t/s against the R9700's 25.6 t/s** **[observed,
+aggregator]**. That 3.75× is far more than the 1.41× bandwidth ratio, and the gap is worth understanding because
+it is the *capacity* effect, not bandwidth: Flash-Next is a ~111 GB-class model that a single 32 GB card cannot
+hold at all, so the R9700 was spilling while 64 GB of V100 did not (the two runs also used different quants,
+IQ3_XXS vs IQ4_XS, so do not read it as a clean number). **Same lesson as §9a: capacity decides whether a run is
+in the fast regime at all; bandwidth only decides how fast inside it.**
+
+What the R9700 actually buys is not peak decode bandwidth. It is **a supported stack, 32 GB in a card that works
+today, and FP8** — and Volta's real weakness is that the mainstream FlashAttention package does not support
+`sm_70`, so long-context prefill falls off a cliff there. (Volta does have tensor cores; they are first-generation
+FP16-only, and it is the software support that is missing, not the silicon.) If pure decode tokens/s were the only
+goal, a used V100 would have been the better purchase. Worth knowing explicitly rather than discovering in six
+months.
+
+| Card | VRAM | Bandwidth | Decode vs R9700 | Fit today | Support status |
+| --- | ---: | ---: | ---: | --- | --- |
+| **R9700** (bought) | 32 GB | 640 GB/s | **1.00×** | yes | current, `gfx1201` |
+| Tesla V100 **PCIe** | 32 GB | 900 GB/s | **1.41×** | needs carrier + PSU | **frozen** |
+| Tesla V100 **SXM2** | 32 GB | 1,130 GB/s | **1.77×** | needs carrier board | **frozen** |
+| 2× V100 PCIe | 64 GB | 900 GB/s | 1.41× (per stream) | two slots + 500 W | **frozen** |
+| 2× V100 SXM2 **+ NVLink** | 64 GB | 1,130 GB/s | up to ~1.77× × TP scaling | custom carrier | **frozen** |
+| RTX A6000 | 48 GB | 768 GB/s | 1.20× | Ampere, display out | supported |
+| RTX 6000 **Ada** | 48 GB | 960 GB/s | 1.50× | Ampere-AD102 | supported, FA + FP8 |
+| Your iGPU | 128 GB | ~230 GB/s | 0.36× | free | current |
+
+Predicted decode, computed from bandwidth ÷ bytes-per-token **[computed]**:
+
+| Model | bytes/token | R9700 | V100 PCIe | 2× V100 | 6000 Ada | iGPU |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Qwen3.8-27B Q4 (dense) | 16 GB | 40 | 56 | 56 | 60 | 14 |
+| gpt-oss-120b Q4 (MoE) | 2.87 GB | 223 | 314 | 314 | 334 | 80 |
+
+Ignore the absolute numbers — real efficiency is 25–70 % of these (§2). Read the **ratios**, which hold.
+
+#### What you actually get by going older
+
+**1. Two 32 GB V100s (PCIe): 64 GB, but the same per-stream speed as one.**
+This is Rule 1 from your own doc and it has not changed: **two cards are 2× capacity and 1× speed.** No NVLink
+exists on the PCIe V100 — the connector is absent, so the "96 GB @ 300 GB/s" text that circulates on refurb
+listings is false for PCIe cards. Two PCIe V100s in your dock would also need **two external links**, and this
+box's lane budget is already spent (Stage 3).
+
+**2. Two V100 SXM2 on a dual carrier: this is the one that actually changes the answer, and it's newer news.**
+The repo doc dismissed SXM2 carriers as unproven: *"no one has published working NVLink bandwidth from a DIY
+build."* **That is now outdated.** Shichinomiya published a tested build in September 2026 — a dual SXM2
+adapter board, **~$700, 64 GB, NVLink 2.0 at 300 GB/s bidirectional, with an onboard PLX PEX8747/8749 switch**,
+driving both modules from one PCIe slot, benchmarked on vLLM **[measured]**.
+
+Why this matters more than it looks: it is the **only option in this whole table that produces genuinely
+parallel single-token work**. Your Strix Halo cannot do tensor parallel at all — RCCL ships no `gfx1151`
+kernels, and two externally-attached cards have no P2P path worth using (§Stage 3, §9e2). A dual-SXM2 card with
+300 GB/s NVLink has a real P2P fabric. That is the setup where `--tensor-parallel 2` stops being a lie.
+
+But it must live **in a real machine**, not your dock: it is a ~500 W dual-slot card on a PCIe x16 edge
+connector. Attach it to a Strix Halo and you are back to a 7.9 GB/s pipe, which throws away the entire point.
+
+**3. One 48 GB card: the best *practical* middle, if you want to buy something.**
+The A6000 (768 GB/s) is only 1.2× the R9700 for the trouble. The **RTX 6000 Ada** at 960 GB/s is 1.5×, has
+48 GB, keeps FlashAttention and FP8, has display output, and is still supported — the anti-V100: nearly the same
+bandwidth with none of the dead-end risk. If a capacity purchase ever makes sense, it is this class, not Volta.
+
+#### The support cliff, which is the real cost
+
+| | R9700 | V100 (sm_70) |
+| --- | --- | --- |
+| CUDA / ROCm | rolling, `gfx1201` in mainline ROCm | CUDA **12.8 froze Maxwell/Pascal/Volta** — feature-complete, frozen **[vendor]** |
+| PyTorch | current wheels | sm_70 dropped from CUDA-12.8 builds; **must use the CUDA 12.6 wheel** **[vendor, PyTorch RFC]** |
+| FlashAttention | yes | **no** — this is the cliff |
+| FP8 | yes | **no** |
+| Long-context prefill | strong | weak: no FA means prefill degrades badly with context |
+
+That table is why "older is cheaper" is only half true. **You are not just buying slower — you are buying a
+pinned stack with an expiration date.** Driver 580.x, CUDA ≤ 12.9, `TORCH_CUDA_ARCH_LIST=7.0`, and every future
+tool you adopt must be checked for sm_70 support. For **agentic coding specifically**, where the workload is
+long prompts resent every turn, the no-FlashAttention weakness hits the exact part of the workload that matters
+most.
+
+#### Cost reality, with the pricing rule applied
+
+Applied per §9c — street price today, not memory of MSRPs. V100 32 GB PCIe cards are listing **$800–$999** on
+eBay in Nov 2026 (median around $900) **[observed]**, i.e. roughly what you paid for a *new, supported* R9700.
+A used V100 is no longer the bargain it was; the DRAM-driven repricing that hurt RAM-heavy products also pulled
+HBM2-era cards up. Add for V100: carrier/PSU/cooling shroud ~$150–350, and a real host if you want NVLink.
+
+```mermaid
+flowchart TD
+  Q{"What is the goal?"}
+  Q -- "fastest single-stream decode, cheap" --> V["1x V100 SXM2 on a carrier<br/>1.77x the R9700<br/>BUT pinned stack, no FlashAttention"]
+  Q -- "real 64 GB tensor parallel" --> S["2x V100 SXM2 on a dual NVLink carrier<br/>300 GB/s P2P, the only true-TP option<br/>BUT needs a real PCIe x16 host"]
+  Q -- "more capacity, low risk" --> A["1x RTX 6000 Ada 48 GB<br/>1.5x, FA + FP8, still supported"]
+  Q -- "already bought the R9700" --> K["Keep it.<br/>Its edge is a supported stack + prefill,<br/>not peak bandwidth"]
+  V --> R{"Am I willing to freeze my toolchain?"}
+  R -- "no" --> K
+  S --> H{"Do I have a desktop host for it?"}
+  H -- "no" --> K
+```
+
+#### Verdict
+
+**None of them are worth buying now that you own the R9700**, and the reason is narrower than "old cards are
+slow" — because they aren't slower at decode. They are dead ends at **prefill** (no FlashAttention), on a
+**frozen** stack, at a used price that is no longer cheap, and the two-card configurations need a **different
+host** to work properly, which is the real expense.
+
+The one genuinely interesting entry is the **dual-SXM2-32 + NVLink carrier**: it is the only 64 GB configuration
+anywhere in this report where tensor parallelism actually works, and it would beat your Strix Halo at 64 GB
+class outright. If Volta ever earns a place here, it is that, in a desktop box, on the 10 GbE you already have —
+not two PCIe V100s bolted to a dock for a capacity you can get more cheaply by raising `ttm.pages_limit` (§7
+rank 5).
+---
+
 ## 10. Recommended system design (your Proxmox question)
 
 **Yes — do the Proxmox move tonight, before the card arrives.** It solves your real deployment failure (no
@@ -1205,6 +1334,17 @@ gain the best-documented configuration in this whole report.
 - DataHardware VRAM-allocation walkthrough (Windows 96 GB BIOS cap vs **Linux ~110–120 GB** via
   `amdttm.pages_limit` / `page_pool_size`, kernel ≥ 6.16.9; credits Jeff Geerling's write-up) —
   https://datahardware.ai/blog/strix-halo-vram-allocation-guide-2026
+
+**Used / older cards (§9h)**
+- **PyTorch RFC: sm_70 (Volta) dropped from CUDA-12.8 builds** — the support cliff in one table; Volta users stay
+  on the CUDA 12.6 wheel — https://github.com/pytorch/pytorch/issues/172352 **[vendor]**
+- The Register on CUDA 12.8 freezing Maxwell/Pascal/Volta —
+  https://www.theregister.com/special-features/2025-01-27/nvidia-begins-deprecating-maxwell-pascal-volta-cards/665923
+- Shichinomiya, **dual Tesla V100 SXM2 NVLink carrier board tested** (~$700, 64 GB, NVLink 2.0 300 GB/s,
+  PLX PEX8747/8749, one PCIe slot, vLLM benchmarks) — https://note.com/shichinomiya_s **[measured]** —
+  supersedes the "no published NVLink bandwidth from DIY carriers" line in `V100_EGPU_DECISION_REPORT.md`
+- R9700 vs 2× V100 aggregated benchmark matrix (head-to-head on Flash-Next; read the capacity caveat in §9h) —
+  https://www.diggtop.com/compare/radeon-ai-pro-r9700-vs-tesla-v100-x2 **[observed, aggregator]**
 
 **Benchmarks & tooling**
 - matnum/local-llm-benchmarks (Strix 128 GB, Vulkan vs ROCm, tokens/watt) — https://github.com/matnum/local-llm-benchmarks

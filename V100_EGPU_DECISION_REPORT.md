@@ -6,6 +6,16 @@
 > repo's hardware, not this box. No spare Radeon card is on hand. This report is a
 > personal hardware purchase decision, independent of the project.
 
+> **Update 2026-11-07 (after this doc was written):** the R9700 was bought anyway, so
+> every "should I buy this" conclusion below is now historical. Two corrections worth
+> carrying forward, both in `docs/R9700-eGPU-with-Strix-Halo-report.md` §9h:
+> (1) a V100 is **faster** at decode than the R9700 (900 vs 640 GB/s) — the R9700's
+> edge is a supported stack and FP8, not bandwidth; (2) Option 1's dismissal of SXM2
+> carriers as unproven is **outdated** — a dual-SXM2 NVLink board (~$700, 300 GB/s,
+> PLX switch, one slot) was benchmarked in Sept 2026 and is the only 64 GB option
+> where tensor parallel genuinely works. The V100 "cheapest 900 GB/s" price premise
+> also no longer holds: PCIe cards now list $800–999 used.
+
 ---
 
 ## 0. The goal and the constraints (from the brief)
