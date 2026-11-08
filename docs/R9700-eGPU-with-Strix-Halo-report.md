@@ -41,6 +41,15 @@ Every number is tagged: **[measured]** = someone published a measurement · **[v
    other rear USB4 v2 port, because your two-server design needs two independent pipes, not one wide one.
 8. **For your OS plan (§10): run Proxmox 9.1 as the host and give BOTH GPUs to the LLM guest.** The desktop VM
    gets virtio-gpu, not the iGPU. If you hand the iGPU to the desktop you throw away the best memory path you own.
+9. **Clustering is a capacity play, and it can never add speed.** Nobody has published a mixed-size 64 + 128
+   Strix Halo cluster; every documented one (AMD's 4-node Kimi-K2.5, Sapphire's 2-node demo, Starry Hope's
+   measured 10–15 t/s on Qwen3-235B) is homogeneous 128 GB. **And the capacity ceiling is higher than the
+   spec-sheet reviews say**: the oft-quoted "~96 GB usable" is a **Windows BIOS UMA cap** — on Linux the GPU pool
+   is the **TTM/GTT limit**, defaulting to ~50 % of RAM and raisable to **~110–120 GB** with one kernel parameter
+   and a reboot **[vendor, ROCm docs]**. Fix that for free before buying a second box. Decode then stays pinned
+   to each node's ~230 GB/s no matter how fast your interconnect is (§9e), so at the same $2,199 as a diskless
+   GMKtec EVO-X2 64 GB "compute expander," **keep the R9700**: the expander buys a slow (10–15 t/s) bigger-model
+   tier, the card buys 45–50 t/s on the tier you actually use (§9d).
 
 ---
 
@@ -334,12 +343,13 @@ tensor-parallel work.
 | 2 | **Prompt-prefix stability + `--cache-prompt`** | Agent harnesses re-send a huge prefix every turn; a cache miss re-prefills thousands of tokens. In agentic coding this is usually bigger than tg | prefill is the expensive phase [measured, §2c] |
 | 3 | **Speculative decoding (MTP / draft model)** | MTP took 28→45–50 t/s on the same weights (acceptance ~0.73 on code); Lucebox's single biggest jump was batching the verifier (+13 t/s) | [measured] |
 | 4 | **Two servers, one per device** — R9700 = fast decoder, iGPU = capacity/batch tier; route by **explicit model name** (`llama-swap`), not by heuristic | Separate bandwidth + separate prompt caches + per-tier optimization regime (§7a). Routing *heuristics* cost more than they return | [folklore, strong] + §7a |
-| 5 | **8-bit KV (`-ctk q8_0 -ctv q8_0`)** | Halves the cache; Wendell's 262k/4-of-4 retrieval run used it | [measured] |
-| 6 | **Concurrency for parallel agent calls** (`--parallel`, batched requests) | One card per *token*, but tokens from different requests batch — prefill headroom is on the R9700 | [measured §2c] |
-| 7 | **Quant ladder down only when context demands** | `peteru` (L1): "the larger the context the higher the quant you need to unlock it" — i.e. don't over-quantize a 32 GB card to buy context | [folklore] |
-| 8 | **Power/clock caps for noise** | ~8 % cost, large acoustics win | [measured] |
-| 9 | **RAM clock / UMA allotment / C-states / hugepages / `numactl`** | Helps the iGPU tier (your capacity tier); the wiki has a Power Modes page + C-States page | [folklore] |
-| 10 | **Skip: `-sm row`, `-tp` across unequal GPUs; skip PCIe switch** | measured failures | [measured] |
+| 5 | **Raise the GPU memory pool: small BIOS carve-out + `amd-ttm --set 110`** | Default GTT is ~50 % of RAM (~64 GB); raising it is the difference between "Qwen3-235B fits" and "needs a second box." One reboot, no hardware | [vendor, ROCm docs] §9d |
+| 6 | **8-bit KV (`-ctk q8_0 -ctv q8_0`)** | Halves the cache; Wendell's 262k/4-of-4 retrieval run used it. Pairs with #5 — free the bytes the KV would otherwise eat | [measured] |
+| 7 | **Concurrency for parallel agent calls** (`--parallel`, batched requests) | One card per *token*, but tokens from different requests batch — prefill headroom is on the R9700 | [measured §2c] |
+| 8 | **Quant ladder down only when context demands** | `peteru` (L1): "the larger the context the higher the quant you need to unlock it" — i.e. don't over-quantize a 32 GB card to buy context | [folklore] |
+| 9 | **Power/clock caps for noise** | ~8 % cost, large acoustics win | [measured] |
+| 10 | **RAM clock / C-states / hugepages / `numactl`** | Helps the iGPU tier (your capacity tier); the wiki has a Power Modes page + C-States page. **Do not chase a bigger BIOS UMA carve-out** — AMD says keep it at 512 MB and use GTT instead (§9d) | [vendor] + [folklore] |
+| 11 | **Skip: `-sm row`, `-tp` across unequal GPUs; skip PCIe switch** | measured failures | [measured] |
 
 ### 7a. Deep dive: does a multi-model agentic router actually help here?
 
@@ -580,6 +590,13 @@ Real product, real price: **Minisforum N5 Max AI NAS — Ryzen AI Max+ 395, 5× 
 $2,399 sale / $2,999 list** for the **64 GB** SKU; **$3,679** for **128 GB** **[vendor, store.minisforum.com]**.
 Same 256-bit bus as the MS-S1 Max, so the same ~230 GB/s class. Your "MS-S1 in a NAS case" read is exactly right.
 
+**Those prices are for a diskless box.** The bays are empty at shipping — "5× HDD" is *capacity*, not inventory,
+and the "~200 TB" figure floating around is the sum of largest-supported drives, not what you get. If you
+actually want populated storage, price it in: 5 × 18 TB enterprise HDD is roughly $900–1,200 on top **[folklore,
+street pricing]**, plus whatever the 4× x1 M.2 slots cost. So the honest comparison against the R9700 is
+**$2,399 bare + drives**, not $2,399 for a filled NAS — which matters more than usual here, because hard-drive
+prices are moving for the same DRAM-adjacent supply reasons as §9c.
+
 **Three facts from its own spec sheet that decide this:**
 
 1. **The 64 GB SKU buys you less memory than you already own.** You have 128 GB. The 64 GB box adds 64 GB —
@@ -606,8 +623,8 @@ Same 256-bit bus as the MS-S1 Max, so the same ~230 GB/s class. Your "MS-S1 in a
 | Interactive decode, MoE (gpt-oss-120b Q4) | 100.4 t/s **needs 2 cards**; 1 card ≈ **56–64** tier | **56.5 t/s on box 1 iGPU already** **[measured, L1]** |
 | Prefill (the agentic-coding sleeper) | **2.2× on 2 cards** (pp512 2,606 vs 1,182) **[measured]** | no change |
 | 2 concurrent agents at full speed | yes | yes |
-| Fits a model you can't run today | `gpt-oss-120b` Q4 (63.4 GiB, 2 cards) | none — 64 GB ⊂ your 128 GB |
-| Storage / NAS / backup target | no | **5 HDD + 5 NVMe, ZFS, 200 TB, 33–38 dB** |
+| Fits a model you can't run today | `gpt-oss-120b` Q4 (63.4 GiB, needs 2 cards) | none on Linux — 64 GB ⊂ your 128 GB, and §9d's TTM fix already reaches ~110 GB |
+| Storage / NAS / backup target | no | **5 HDD + 5 NVMe bays, ZFS, ~200 TB raw — but ships diskless, budget drives separately** |
 | Extra PSU, dock, cables, noise | needs ≥750 W PSU + dock | self-contained, quiet, 250 W total |
 | Risk | ROCm multi-device, kernel flags, power-cap bug | near zero — separate box |
 
@@ -665,6 +682,307 @@ rate (§12 #5). That log tells you whether you need *speed* (→ already have it
 
 ---
 
+### 9d. GMKtec EVO-X2 64 GB at $2,199 — the same-price question, head-to-head with the card
+
+**Verified from the GMKtec page (variant `46826048422042`):** EVO-X2 395 **64 GB + 1 TB = $2,199**; 128 GB + 1 TB
+= **$3,499**; 128 GB + 2 TB = $3,649. Specs: LPDDR5X-8000 (8-channel, same ~256-bit bus), **dual M.2 2280 both
+PCIe 4.0 x4** (up to 16 TB), Wi-Fi 7 (MT7925), **1 × RJ45 — 2.5 GbE only (RTL8125BG)**, 120 W typical / 140 W
+peak, external USB-C PD 30 W adapter. **No OCuLink** — that is the **EVO-X3**; the two "OCuLink" strings on that
+page are cross-sell links to it **[vendor]**.
+
+**First, a pricing trap worth flagging: the 64 GB SKU is the worst per-GB value in the line.**
+
+| SKU | Price | $/GB |
+| --- | ---: | ---: |
+| EVO-X2 **64 GB** | $2,199 | **$34.4** |
+| EVO-X2 **128 GB** | $3,499 | **$27.3** |
+| My MS-S1 Max 128 GB + 2 TB | $4,199 | $32.8 |
+
+The 128 GB variant is **21 % cheaper per GB** than the 64 GB one, and it's $700 below what I paid for an MS-S1
+(different I/O, but same silicon). RAM-driven pricing means the *bigger* SKU carries proportionally less
+markup — the opposite of normal consumer intuition, and the reason "cheap 64 GB" is a false economy here.
+(§9c again: re-quote these the day you buy.)
+
+**Second: has anyone clustered a 64 with a 128? I found no documented instance, and there's a reason.**
+
+Every published Strix Halo cluster is homogeneous 128 GB:
+
+| Cluster | Nodes | Pool | Link | Result |
+| --- | --- | --- | --- | --- |
+| AMD official (Framework Desktop) | 4 × 128 GB | 512 GB | 5 GbE Ethernet | Kimi-K2.5 (trillion-param) UD_Q2_K_XL ~375 GB **[vendor]** |
+| Sapphire Edge demo, Embedded World 2026 | 2 × 128 GB | 256 GB | USB-C between the two boxes | Qwen3-235B class **[vendor demo]** |
+| Starry Hope measurement | 2 × Sapphire Edge 395 | 256 GB | Ethernet | **Qwen3-235B-A22B Q3_K_S (~101 GB) at ~10–15 t/s** **[measured]**; the "3–5 t/s dense" figure is a *projection*, never run |
+| DGX Spark pair | 2 × 128 GB | 256 GB | ConnectX-7 200 GbE direct | no switch needed |
+
+Consensus rule from that data set **[measured]**: **clustering adds memory capacity, never memory bandwidth —
+and it only pays off for MoE models above ~100 GB.** Two Strix Halos over Ethernet were measured at 10–15 t/s
+on a 235B MoE **that cannot fit on one box at all**. For a model that *does* fit, splitting makes it slower.
+
+**Correction to my first draft of this section.** I initially wrote that the 2.5 GbE NIC "kills it." The
+arithmetic says otherwise, and getting this right matters, because it changes what you'd actually be buying.
+
+**First: the ~96 GB "usable" figure is a Windows/BIOS number, and on Linux your real ceiling is ~110–120 GB.**
+
+The published 96 GB comes from the **BIOS UMA frame buffer cap on Windows**. On Linux there is no discrete VRAM
+pool at all — gfx1151 uses **GPU Virtual Memory (GPUVM)**, and what limits the GPU is the **GTT/TTM page limit**,
+which AMD says defaults to **~50 % of system RAM (≈64 GB)** and is a knob you turn **[vendor, ROCm docs]**. AMD's
+own guidance is counterintuitive and worth repeating: **set BIOS VRAM to its 512 MB minimum and raise the TTM
+limit instead**, because memory is physically shared and GTT-backed allocations are dynamic and reclaimable.
+
+**The proof was already in this report and I misread it.** Wendell's kernel line (§8) carries
+`ttm.pages_limit=29360128` → **29,360,128 × 4096 = 120.3 GB (112 GiB)**, and `amdgpu.gttsize=114688` MiB is the
+same 112 GiB in the other units. I'd logged those as eGPU-tuning flags; they are in fact the "unlock the whole
+box" flags. Practical ceiling on a 128 GB Linux box is therefore **~110–120 GB mapped to the GPU**, leaving
+8–18 GB for OS + KV.
+
+| Model | Size | Fits one 128 GB box? |
+| --- | ---: | --- |
+| Qwen3.8-27B Q4_K_XL | ~17 GB | trivially |
+| `gpt-oss-120b` Q4 | ~63 GB | yes |
+| Qwen3-235B-A22B Q3_K_S | ~101 GB | **yes on Linux (~110–120 GB), no on Windows (96 GB)** |
+| …+ 50 k-token KV @ fp16 | +9.6 GB | tight — use `-ctk q8_0 -ctv q8_0` to halve it |
+| GLM-4.6 / MiniMax-M2 class Q3–Q4 | 120–200 GB | no — this is the tier that still needs a second node |
+
+**This guts the expander's main justification.** The 64 GB peer's selling point was "gets you over the ~96 GB
+line" — but you reach that line by editing a kernel parameter on a box you already own, for free. After that fix,
+a second node only buys you the **>110 GB** tier, and a 64 GB peer gets you to ~166 GB only if you leave the
+default memory-proportional split, which is the wrong split for speed anyway (see below).
+Verify on your own box before trusting any of this: `amd-ttm` (from `pipx install amd-debug-tools`) prints the
+current limit, and `--set 110` is one reboot.
+
+**Second: decode traffic across a link is tiny; it is latency and load time that bite.** Per token, a layer split
+crosses the link exactly once per boundary, carrying one activation vector (hidden 4096, fp32 ≈ 16 KiB):
+
+| Quantity | Value | On 2.5 GbE (312 MB/s) | On ConnectX-3 (~3.3 GB/s) |
+| --- | ---: | --- | --- |
+| Decode traffic, 1 boundary @ 15 t/s | **~240 KiB/s** | **irrelevant (0.08 % of link)** | irrelevant |
+| Model load, 101 GB | 101 GB | **~324 s** | ~31 s (and ~92 s over TB-net) |
+| Prefill, 50 k-token prompt | ~819 MB | ~2.6 s | ~0.25 s |
+| Prefill, 200 k-token prompt | ~3.3 GB | ~10.5 s | ~1.0 s |
+| RPC sync, 94 crossings × RTT | — | ~14 ms/token → **71 t/s cap** | ~0.19 ms → 5,300 t/s cap |
+
+**[computed from Qwen3-235B-A22B geometry: hidden 4096, 94 layers, 22B active, Q3_K_S]** — my own arithmetic,
+not a published measurement, but it reproduces the observed 10–15 t/s almost exactly from
+`230 GB/s ÷ (9.5 GB active weights/token ÷ 2 nodes) × ~50 % efficiency ≈ 12 t/s`, which is the strongest
+evidence that **decode is local-bandwidth-bound and the network is essentially free for token generation.**
+
+Consequences that reverse my earlier claim:
+- **Decode is insensitive to the link.** Even 2.5 GbE is 1000× more than decode needs. Adding a NIC does *not*
+  make tokens faster.
+- **What a fast interconnect actually buys is (a) load time and (b) prefill** — 5 min → 30 s per model swap, and
+  2.6 s → 0.25 s per 50 k-token agentic re-send. For a workflow that reloads and re-prefills constantly, that is
+  the entire difference between usable and not.
+- **Split balance is the real lever.** Both nodes have identical ~230 GB/s, so the correct split is **50/50 by
+  layers**, not the memory-proportional ⅓/⅔ default (llama.cpp discussion #30671 **[measured]**). Left on the
+  default, the 128 GB node is the critical path and you get ~⅔ of balanced speed for the price of two boxes.
+  Hand-set `--tensor-split` to equalize *stage time*, not memory.
+- **50/50 caps total size at ~2× the 64 GB node's usable (~56 GB) ≈ 112 GB.** Enough for 235B Q3_K_S, not enough
+  for GLM-4.6-class at decent quantization — that needs two 128 GB nodes.
+- Only **interleaved / tensor splits** (a crossing per layer) turn latency into a hard 71 t/s TCP ceiling, and
+  only those need RDMA to be viable. The asymmetry discussion's warning stands: a bad split **loses up to 2.4×
+  on prefill**.
+
+**Head-to-head, same $2,199:**
+
+| | **R9700 + DEG2 ($2,198)** | **EVO-X2 64 GB as expander ($2,199)** |
+| --- | --- | --- |
+| Interactive decode, dense 27B class | **45–50 t/s** w/ MTP **[measured]** | no change from today (~28) |
+| Prefill, the agentic bottleneck | **2.2×** on 2 cards; ~2× even on 1 vs iGPU **[measured]** | **worse** — split prefill + link |
+| Added capacity | 32 GB @ **640 GB/s** | ~56 GB usable @ **~230 GB/s** |
+| Unlocks a model I can't run today | `gpt-oss-120b` Q4 (63.4 GiB, needs 2 cards) | the **>110 GB tier** (GLM-4.6 / 235B-at-higher-Q) — but the same tier starts at ~110 GB on Linux for **free** via TTM |
+| Usable at what speed | full speed | **~10–15 t/s** **[measured, homogeneous pair]** |
+| Fits my split-engine plan (§7a) | **yes** — that's exactly what it's for | no second *fast* tier |
+| Cost to be *useful* | $0 more | +€133 NIC kit for load/prefill, optional for decode |
+| New failure domains | ROCm multi-device, power-cap bug, noise | split tuning, another box to patch |
+
+**Verdict is still R9700 — and your GTT correction is why.** My original reason ("the expander unlocks a model
+tier you can't run") collapsed the moment you pointed out the 96 GB figure is Windows-only. Raise `ttm.pages_limit`
+on the box you own and Qwen3-235B-A22B Q3_K_S fits at ~101 GB, for free. What's left for the expander is the
+**>110 GB** tier — GLM-4.6/MiniMax-M2 at usable quantization — and a 64 GB peer gets you to only ~166 GB total
+while running those at ~10–15 t/s. So: the card buys **speed on the models you use** (45–50 t/s in the 17–63 GB
+band); the expander buys **access to a bigger tier you'd find too slow to drive an agent with**. Buy the card;
+edit one kernel parameter tonight.
+
+```mermaid
+flowchart TD
+    Q["You have $2,199 spare"] --> A{"What hurts today?"}
+    A -- "Responses too slow<br/>(dense 27B, edit loop)" --> C["R9700 + DEG2<br/>45-50 t/s with MTP"]
+    A -- "Model won't fit<br/>(>~110 GB on Linux)" --> D{"How much bigger?"}
+    A -- "Desktop VM fights<br/>the LLM for RAM" --> E["EVO-X2 64 GB<br/>as Proxmox node #2"]
+    A -- "Need NAS / backup target" --> F["N5 Max 128 GB<br/>+ your own drives"]
+    D -- "~101 GB<br/>(235B Q3)" --> X["Already fits: raise<br/>ttm.pages_limit, free"]
+    D -- "120 GB+<br/>(GLM-4.6 class)" --> H["64 GB peer too weak<br/>need 2x 128 GB nodes"]
+    X --> R["Then measure §12 before<br/>buying ANY second box"]
+    H --> R
+    C --> R
+    E --> R
+```
+
+### 9e. The "diskless compute expander" framing — what a fast interconnect actually buys, and what it can't
+
+Your reframe is the right one, and it's better than "buy a NAS": a diskless Strix box with a light embedded OS
+is effectively **a power-fed bucket of compute — 16 Zen 5 cores, 40 CU of GPU, the XDNA NPU, and ~64 GB of
+bandwidth-matched unified memory — hanging off your machine once you interconnect it.** Two corrections follow
+from taking that framing seriously.
+
+**Correction 1: the usable-RAM figure is a tunable, not a constant — and the lever is GTT, not the OS.**
+
+Per §9d, the oft-quoted 96 GB is the **Windows BIOS UMA cap**. On Linux the limit is `ttm.pages_limit`, which
+defaults to **~50 % of RAM** (≈64 GB on your box, 32 GB on a 64 GB peer) and is raisable. So "a light embedded
+OS gives you more" is only half the story — a light OS frees RAM the GPU still can't map unless you raise the
+TTM limit:
+
+| Node | Nominal | Linux default GTT (~50 %) | Raised (`amd-ttm --set`) |
+| --- | ---: | ---: | ---: |
+| MS-S1 Max | 128 GB | ~64 GB | **~110–120 GB** **[vendor, AMD doc / Wendell's flags]** |
+| Expander (64 GB) | 64 GB | ~32 GB | ~56 GB **[inferred]** |
+| **Pair, both raised** | **192 GB** | 96 GB | **~166–176 GB** |
+
+Two consequences. First, **if you never raise the limit, a 64 GB peer + your box ≈ 96 GB total — which is exactly
+what your single box gets on Windows for free.** That is a poor return on $2,199. Second, the size cap is set by
+the *smaller* node **only if you insist on a bandwidth-balanced 50/50 split**; for capacity-bound MoE where the
+peer is a bonus rather than the critical path, an unbalanced split that fills the small node and puts the
+remainder on the big one is fine — you trade balance for size.
+
+**Correction 2: no interconnect adds decode bandwidth, so a fast link has a narrow job.**
+
+This is the wall, and it is not negotiable:
+
+```
+tok/s  ≈  bytes-read-per-token ÷ LOCAL memory bandwidth
+```
+
+For Qwen3-235B-A22B: **9.46 GB of active weights per token**. Split perfectly across two nodes → 4.73 GB each
+→ `230 ÷ 4.73 × ~50 % efficiency ≈ 24 t/s` theoretical **[computed]**. Starry Hope's measured **10–15 t/s**
+sits *below* that, which tells you real RPC efficiency is ~25–30 %, not 50 % — there is genuine overhead beyond
+bandwidth, and nobody has published a run that recovers the theoretical number.
+
+**No interconnect changes that ceiling, because no interconnect moves the weights faster than the DRAM they sit
+on.** A ConnectX-7 would leave decode exactly where it is. So the honest ranking of what a fast link buys, by
+size of win:
+
+| What a fast link buys | 2.5 GbE (0.31) | ConnectX-3 (3.3) | CX-5 / PCIe 4.0 x4 (6.3) | Verdict |
+| --- | ---: | ---: | ---: | --- |
+| Decode speed | 10–15 t/s | **10–15 t/s** | **10–15 t/s** | **zero** — needs only 240 KiB/s |
+| Model load, 101 GB *(once — `rpc-server -c` caches it)* | 324 s | ~31 s | ~16 s | matters only on first run |
+| Prefill traffic, 50 k-token prompt | 2.6 s | 0.25 s | 0.13 s | large, and agentic loops re-prefill |
+| **Prefill→decode handoff (KV, 50 k @ fp16 = 9.6 GB)** | 31 s | 2.9 s | 1.5 s | **the one place 2.5 GbE is disqualifying** |
+| KV handoff with q8_0 KV (`-ctk q8_0 -ctv q8_0`) | 15 s | 1.5 s | 0.8 s | 8-bit KV halves it again |
+
+**[computed]** from Qwen3 geometry (hidden 4096, 94 layers, 4 KV heads, head_dim 128): a 50 k-token KV cache is
+**9.63 GB fp16** — 31 s to ship across 2.5 GbE, which is longer than the whole prompt took to prefill.
+
+**One caveat on the "USB4 as an interconnect" column, because it is easy to conflate two different things.**
+7.5 GB/s is what USB4 v2 delivers when it tunnels **PCIe** for an eGPU (§Stage 0). Used as an **IP link between
+two boxes**, the wiki's measured number is **~9 GBit/s (~1.1 GB/s) over a Thunderbolt 3 cable [measured,
+strixhalo.wiki/AI/Clustering]** — still ~3.5× the onboard 2.5 GbE and free but for a ~$5 UGOURD 40 Gbps cable,
+yet nowhere near a CX-3. Corrected two-box ladder: **CX-5 6.3 ≫ CX-3 3.3 ≫ 10 GbE ≈ TB-net 1.1 ≫ EVO-X2 RJ45
+0.31 GB/s.** Note the EVO-X2's USB4 is **40 Gbps (v1 class), 1 front + 1 rear [vendor]** — not the 80 Gbps v2
+ports on your MS-S1, and the wiki says Strix Halo systems generally expose two USB4 v1 ports.
+
+So: **a good interconnect is a prefill/iteration-speed upgrade, never a decode upgrade.** Decode is capped by the
+slowest node's LPDDR5X, and both nodes are the same chip. If someone sells you RDMA as a way to make tokens
+faster on a Strix pair, they're selling you the wrong thing.
+
+**The concrete build, if you ever do it — and your "diskless" point is what makes it work.** The expander's weak
+spec is its 2.5 GbE NIC, and the fix is to stop using the NIC. On a diskless node you are not obliged to spend
+the good PCIe slot on a boot drive:
+
+- **Boot the expander from a USB stick or its SD card reader** (the EVO-X2 has both, SD 4.0/SDXC), freeing **both
+  M.2 slots** — and remember it ships with a 1 TB NVMe anyway, which is what `rpc-server -c` wants.
+- Put a **€25 ConnectX-3 + DAC** in a spare M.2/PCIe slot (wiki recipe: ~€133 all-in). PCIe 3.0 x4 caps the card
+  at ~26 Gbit/s **[measured, strixhalo.wiki]** — which is *plenty*, because you only need 1–3 GB/s for
+  prefill + KV handoff.
+- **Try the $5 cable first.** A Thunderbolt/USB4 cable between the two boxes gives **~9 GBit/s with no hardware
+  at all**, and NetworkManager shows a `thunderbolt-net` connection immediately **[measured, strixhalo.wiki]**.
+  Soft-RDMA (`siw`) over that needs no NIC either **[folklore]**. Upgrading to IB is only worth it once you've
+  decided the pair is permanent, because that's when first-run load cost stops mattering.
+- Hard limits on that free option, both from the wiki: **thunderbolt-net has no routing**, so you can directly
+  connect **three** boxes (one per port) and no more; and **bonding two thunderbolt-net interfaces does not work
+  yet** — a kernel patch is pending. So "bond both my USB4 ports for 2×" is not a thing today.
+
+**One part of the expander that does not contribute: the NPU.** You listed "CPU, GPU, NPU, APU" as what you'd be
+adding, and the NPU is the one that doesn't arrive. The XDNA 2 array is driven by **Vitis AI / Ryzen AI Server
+Runtime, not by ggml** — there is no llama.cpp backend for it, and llama.cpp's RPC exposes the **iGPU**, not the
+NPU **[vendor/community]**. In practice a Strix peer contributes its memory bandwidth and its 16 Zen 5 cores.
+Don't price the NPU into the decision.
+
+**What this changes about the verdict:** nothing, and for a reason worth stating plainly. The expander + RDMA
+path gets you *into* the 100–170 GB model tier at 10–15 t/s. The R9700 gets you 45–50 t/s in the tier you
+actually live in. The expander is the right answer to "**I must run a model that physically cannot fit**"; it
+is the wrong answer to "make Copilot/agent turns faster." And if you do ever want the big-model tier properly,
+buy **two 128 GB nodes**, not 64 + 128 — a 50/50 bandwidth-balanced pair of 128 GB nodes is ~190–230 GB usable
+at full headroom, and it's the only config the published clusters actually endorse.
+
+### 9e2. "Really good **RDNA** interconnect" — a fast GPU-to-GPU fabric between two boxes
+
+*(Reading your earlier "rdma" as **RDNA**, i.e. AMD's GPU interconnect rather than network RDMA — which is a
+much more interesting question, and the one I should have answered first.)*
+
+True RDNA peer links do not exist between GPUs; the AMD GPU-to-GPU fabric is **xGMI/Infinity Fabric**, and
+gfx1151's iGPU has **no xGMI lanes exposed** — P2P between consumer RDNA3/4 cards is limited to what PCIe gives
+you **[vendor/community]**. So the honest question is: **if I had a fast GPU-to-GPU fabric (xGMI-class, or even
+just PCIe P2P), what would it unlock?** Answer: **tensor parallelism — which is the only way a second device
+buys speed instead of capacity.**
+
+All-reduce traffic for a 2-way TP of Qwen3-235B (hidden 4096, 94 layers, fp16 partial sums) is **0.77 MB/token
+across 94 collectives** **[computed]**, which is trivial by *bandwidth* and punishing by *latency*:
+
+| Fabric between devices | Bandwidth | Latency/collective | TP decode cap |
+| --- | ---: | ---: | ---: |
+| Thunderbolt-net (2 boxes) | 1.1 GB/s | ~150 µs TCP stack | **68 t/s** — and that's the optimistic case |
+| ConnectX-3 IB (2 boxes) | 3.3 GB/s | ~2 µs | 2,373 t/s |
+| PCIe P2P over switch (1 box) | 13.4 GB/s **[measured, L1]** | ~5 µs | 1,896 t/s |
+| xGMI (MI300-class) | ~900 GB/s | ~1 µs | 10,542 t/s |
+| **local LPDDR5X (the real limit)** | **~230 GB/s** | 0 | **~24 t/s ceiling** |
+
+Two conclusions, and they cut against each other usefully:
+
+1. **Over any box-to-box link, latency is the wall, not bandwidth** — 94 round-trips per token. TCP/IP stacks
+   (~150 µs) put TP over Thunderbolt-net at a ~68 t/s cap *in principle*, but that assumes perfect overlap and
+   nobody achieves it; real RPC implementations don't even offer tensor parallel across devices (the Framework
+   thread in §11 asks for exactly this and gets "would require modifying the graph in a backend").
+2. **Even a perfect fabric wouldn't make it fast.** TP halves bytes-read per node per token (9.46 → 4.73 GB),
+   which lifts the bandwidth ceiling from ~12 to **~24 t/s** — still half of what your single R9700 does at
+   45–50 t/s on a 27B model. **A second Strix node can never be the fast tier**, because both nodes are the same
+   ~230 GB/s chip; xGMI-class latency would only get you a bigger *slow* model.
+3. **Inside one box, the picture is different** — that's why the R9700 + iGPU asymmetric split (§4) is the
+   productive version of this idea. PCIe P2P is fast enough for coarse splits, which is exactly what vuln.dev's
+   engine exploits with expert placement, and what `-ts 0,1,1 -cmoe` (§12 #3) would test on your single card.
+
+**Your Proxmox correction matters more for RPC than it sounds: the desktop VM is the *client*, not a peer.** In
+llama.cpp's RPC model the roles are fixed and asymmetric — **`rpc-server` runs on the machine whose memory you
+want to borrow, and `llama-server` (the master) runs where inference is orchestrated**, with
+`--rpc <peer-ip>:50052` **[vendor, strixhalo.wiki]**. So in your §10 design:
+
+- **`ubuntu-ai` VM = master.** It owns the R9700 + iGPU, the prompt cache, MTP, `--parallel`, and the OpenAI
+  endpoint. Nothing about the desktop VM changes — Copilot and Continue/Cline still just hit
+  `http://vm-ai:8080/v1` as an ordinary OpenAI-compatible client.
+- **A future expander box = `rpc-server -c`** (the `-c` caches its shard locally, which is why the EVO-X2's
+  bundled 1 TB NVMe is useful).
+- **The desktop VM should never be an RPC peer.** Putting a GPU behind the *desktop* VM and RPC-ing into it
+  would route your capacity tier through the weakest device and add a hop to every token — the exact inverse of
+  §10's "give the iGPU to the LLM guest" rule. The desktop's only inference role is consumer-of-endpoint, and
+  keeping it that way is what makes the desktop VM disposable.
+- Practical consequence: **you can add an RPC peer later without touching the LLM VM's design at all** — it's one
+  extra flag on the master and a systemd unit on the peer. That's a good reason to leave headroom (a free M.2
+  slot, an unused 10 G port) rather than to buy the second box now.
+
+**If you ever genuinely want a fast GPU fabric:** it isn't a Strix Halo project. It's an AM5/Threadripper box
+with two x8 slots (or a Highpoint 1628A switch) and **two R9700s**, where `gpt-oss-120b` measured **100.4 t/s**
+against 56.5 on one iGPU **[measured, L1]**. Your MS-S1's lane budget (§Stage 2) can't host that topology.
+
+### 9f. The one honest case for the EVO-X2
+
+**The one honest case for the EVO-X2:** as a **second Proxmox node for the desktop VM**, so the LLM box stays
+headless and its whole 128 GB goes to inference (§10). 64 GB is plenty for a desktop VM, its 1 TB NVMe (plus a
+second x4 M.2 slot) makes good VM storage, and 120 W is silent. That's an *infrastructure* purchase, not an
+inference one — and as a **NAS** it is the wrong tool: **no HDD bays and only a 2.5 GbE NIC**, which is precisely
+what the N5 Max is for. Note the N5 Max also ships **diskless**, so both options need a drive budget; the N5 just
+has somewhere to put five of them. If you want a cluster partner with storage, that's the N5 Max — at the
+**128 GB** SKU, since a 64 GB peer adds the smallest possible increment (§9b/§9e). If you want inference speed,
+it's the card.
+
 ## 10. Recommended system design (your Proxmox question)
 
 **Yes — do the Proxmox move tonight, before the card arrives.** It solves your real deployment failure (no
@@ -712,9 +1030,13 @@ flowchart TB
 1. **Tonight, before the card:** install **Proxmox VE 9.1** on the MS-S1, wired to one of the 10 G ports (or
    USB-tether a phone if the Realtek misbehaves before you confirm kernel version). Verify
    `uname -r` ≥ `6.17.11` and `ip -br a` shows both NICs — this single step retires your failure mode.
-2. Set **fixed GPU memory (UMA) in the MS-S1 BIOS** and never change it from the OS side **[wiki: dynamic
-   allocation is unstable]**. Since both GPUs go to one guest, size the carve-out for the big-model tier
-   (Wendell used `amdgpu.gttsize=114688` ≈ 112 GiB exposed to the iGPU).
+2. **GPU memory: follow AMD's ROCm guidance, not the old "big carve-out" folklore.** Keep the **BIOS UMA/VRAM
+   reservation small (512 MB minimum)** and raise the **TTM/GTT limit** instead — `amd-ttm --set 110` (from
+   `pipx install amd-debug-tools`), or `ttm.pages_limit=` directly. On gfx1151 memory is **mapped, not
+   partitioned** (GPUVM), so a big firmware carve-out only permanently steals RAM from the host for no speed
+   gain **[vendor, ROCm docs]**. Wendell's working config is the proof: `ttm.pages_limit=29360128` ≈ **120 GB**.
+   The wiki's "set fixed VRAM in BIOS or expect slowdowns" warning belongs to the **iGPU-passthrough** bullet
+   above, not to sizing the pool — don't conflate the two.
 3. Create **VM `ubuntu-ai`** (Ubuntu Server 24.04/26.04, `host` CPU type, q35, memory with ballooning **off**).
    Pass through **both** `amdgpu` PCI functions (iGPU + audio + R9700) with `vfio-pci`; blacklist `amdgpu`
    on the host for the devices you assign. Add the L1 stability flags
@@ -744,9 +1066,41 @@ gain the best-documented configuration in this whole report.
 - strixhalo.wiki MS-S1 MAX (10 G NIC + fan control) — https://strixhalo.wiki/Hardware/PCs/Minisforum_MS-S1_MAX/
 - External GPU guide (OCuLink adapters, AMD power-limit bug) — https://strixhalo.wiki/Guides/External_GPU/
 - Clustering with RDMA (proven €133 ConnectX-3 + DAC two-box recipe) — https://strixhalo.wiki/AI/Clustering_with_RDMA/
+- Clustering overview (**thunderbolt-net ~9 GBit/s, `rpc-server -c` disk cache, no-routing and no-bonding limits,
+  $5 UGOURD cable**) — https://strixhalo.wiki/AI/Clustering/ · the page notes **your own ai-toolbox llama.cpp
+  builds already ship with `GGML_RPC` enabled**, so §9e needs no new software · community channel: **#beyond128g**
 - VM iGPU passthrough — https://strixhalo.wiki/Guides/VM_iGPU_Passthrough/ · companion guide https://github.com/isc30/ryzen-gpu-passthrough-proxmox
 - llama.cpp + ROCm — https://strixhalo.wiki/AI/llamacpp-with-ROCm/
 - ServeTheHome MS-S1 Max review (full port/lane spec) — https://www.servethehome.com/minisforum-ms-s1-max-review-the-best-ryzen-ai-max-mini-pc-yet/
+
+**Multi-box clustering (§9a/§9d)**
+- AMD official 4-node Framework Desktop cluster guide (512 GB pooled, 5 GbE, trillion-param Kimi-K2.5) —
+  https://www.amd.com/en/developer/resources/technical-articles/2026/how-to-run-a-one-trillion-parameter-llm-locally-an-amd.html
+- Framework Community: **two-node Strix Halo cluster with llama.cpp RPC** (MiniMax-M2 / GLM-4.6, 256 GB pooled) —
+  https://community.frame.work/t/building-a-two-node-amd-strix-halo-cluster-for-llms-with-llama-cpp-rpc-minimax-m2-glm-4-6/77583
+  — Framework Desktop + HP Z2 Mini G1a, 256 GB pooled, with a performance-evaluation video. The thread's open
+  questions match §9a exactly: nobody has tensor parallelism across RPC devices, and Thunderbolt/USB4 networking
+  as an upgrade over RJ45 is still untested there.
+- Sapphire Edge two-box demo coverage (Embedded World 2026, USB-C interconnect) —
+  https://fudzilla.com/sapphire-shows-amd-strix-halo-mini-pc-prototype-at-embedded-world-2026/
+- Starry Hope, measured 2-node Strix Halo cluster (Qwen3-235B-A22B Q3_K_S at ~10–15 t/s over Ethernet) —
+  https://www.starryhope.com/minipcs/sapphire-linked-strix-halo-mini-pc-cluster-llm-inference/
+- DataHardware "Can You Cluster Two Mini PCs?" reality check (the ~100 GB MoE threshold rule) —
+  https://datahardware.ai/blog/cluster-two-mini-pcs-local-llm-2026
+- Speed-aware vs memory-proportional split (unmerged llama.cpp proposal, source of the `s*` formula) —
+  llama.cpp discussion #30671 · multi-GPU split-mode limits: `LinuxJordon/llama.cpp-strix-halo` `docs/multi-gpu.md`
+- GMKtec EVO-X2 (64 GB $2,199 / 128 GB $3,499, **2.5 GbE only, no OCuLink** — that's the EVO-X3) —
+  https://www.gmktec.com/products/amd-ryzen%E2%84%A2-ai-max-395-evo-x2-ai-mini-pc
+- ryandau/strix-halo-llm-server build guide (Vulkan-not-ROCm rationale, stock-kernel rule, 128 GB EVO-X2) —
+  https://github.com/ryandau/strix-halo-llm-server/blob/main/docs/build-guide.md
+
+**GPU memory sizing on Strix Halo (the ~96 GB myth)**
+- **AMD ROCm official: "Strix Halo system optimization"** — GPUVM/TTM/GTT explained, small-BIOS-carve-out
+  guidance, `amd-ttm` helper, kernel requirements —
+  https://rocm.docs.amd.com/en/docs-7.2.0/how-to/system-optimization/strixhalo.html
+- DataHardware VRAM-allocation walkthrough (Windows 96 GB BIOS cap vs **Linux ~110–120 GB** via
+  `amdttm.pages_limit` / `page_pool_size`, kernel ≥ 6.16.9; credits Jeff Geerling's write-up) —
+  https://datahardware.ai/blog/strix-halo-vram-allocation-guide-2026
 
 **Benchmarks & tooling**
 - matnum/local-llm-benchmarks (Strix 128 GB, Vulkan vs ROCm, tokens/watt) — https://github.com/matnum/local-llm-benchmarks
@@ -786,3 +1140,16 @@ memory-hierarchy post came from. Everything in this report applies to a Gorgon b
 4. **Vulkan vs ROCm pp/tg for your actual coding model + 32k context**, not a 512-token microbench.
 5. **`--cache-prompt` hit rate under your real harness** (Continue/Cline request logs) — I expect this to be the
    largest single agentic-coding win and nobody has measured it for this box.
+6. **Your actual GPU-allocatable memory** — run `amd-ttm` (from `pipx install amd-debug-tools`) bare-metal and
+   again inside your Proxmox LLM guest, then `amd-ttm --set 110` and re-check. This is now the single most
+   valuable measurement in the report: §9d/§9e's whole "do I need a second box" threshold moves by ~25 GB
+   depending on it, and it costs a reboot instead of $2,199.
+7. **Direct USB4/Thunderbolt-net between two Strix boxes** — the wiki has a number (~9 GBit/s) but the Framework
+   thread I cite in §11 stopped at "will try" for a *head-to-head vs their own Ethernet run*. Worth reproducing
+   on your hardware, because it is the only interconnect upgrade that helps: model load and prefill, not decode
+   (§9e). Measure `iperf3` over `thunderbolt-net` before buying any NIC.
+8. **If a second Strix box ever shows up free/cheap:** measure whether a **64 + 128** RPC pair ever beats the
+   128 GB box alone. Hand-set `--tensor-split` toward 50/50 rather than leaving the memory-proportional default,
+   and compare `pp` as well as `tg` — §9d argues the default split makes it *slower*, and no one has published
+   the mixed-size case. A ConnectX-3 in one of the EVO-X2's two x4 M.2 slots would make that test meaningful;
+   on 2.5 GbE the answer is already known to be no.
