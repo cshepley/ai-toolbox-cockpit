@@ -1,0 +1,7 @@
+# AMD eGPU runtime power management — keep the eGPU awake.
+# Staged copy. Install to /etc/udev/rules.d/99-amd-egpu-pm.rules
+#
+# D3->D0 resume over USB4 frequently fails on this board (Level1Techs rear-port ACPI flaw).
+# R9700 = vendor 0x1002, device 0x7551.
+
+ACTION=="bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x1002", ATTR{device}=="0x7551", ATTR{power/control}="on"

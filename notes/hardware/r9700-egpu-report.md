@@ -374,6 +374,56 @@ tensor-parallel work.
    ```bash
    amdgpu.ppfeaturemask=0xfff7ffff   # kernel cmdline: enables overdrive bits (default mask + overdrive)
    ```
+9. **Ubuntu's `linux-firmware` ships the WRONG DMCUB blob for the R9700.** **[measured, 2026-11-09]**
+   `/usr/lib/firmware/amdgpu/dcn_4_0_1_dmcub.bin.zst` is not a file at all — it is a **symlink to
+   `dcn_3_2_0_dmcub.bin.zst`**, i.e. RDNA3 / Navi 21 code, on a card that needs DCN 4.0.1. Upstream
+   `linux-firmware` carries a genuinely distinct blob. Symptom is a card that enumerates, links, and
+   reaches `SMU is initialized successfully!` and then dies:
+   ```
+   failed to load ucode DMCUB(0x3F)
+   psp gfx command LOAD_IP_FW(0x6) failed and response status is (0x11)
+   ```
+   Confirm in five seconds — note Ubuntu stores firmware **zstd-compressed**, so `ls *.bin` lies and
+   reports nothing installed:
+   ```bash
+   cd /usr/lib/firmware/amdgpu && ls -l dcn_4_0_1_dmcub.bin.zst   # 'l' at the start = symlink = bug
+   ```
+   Ubuntu's target decompresses to 284432 B (`c7a52044…`); upstream `dcn_4_0_1_dmcub.bin` is 368288 B
+   (`74b56765…`). Sibling blobs (`gc_12_0_1_rlc`, `gc_12_0_1_toc`) match upstream byte-for-byte, which
+   is what isolates the fault to this one DCN blob. Fix = install the real upstream blob and rebuild
+   the initramfs; afterwards `failed to load ucode DMCUB` disappears and DMUB reports a real RDNA4
+   version. Do **not** touch `dcn_3_x` blobs — the Strix Halo iGPU (gfx1151, `dcn_3_5`) needs them and
+   drives the desktop. Caveat: Ubuntu's *whole* amdgpu set is an older snapshot (`dcn_3_2_0` itself
+   does not match current upstream) and the package is versioned `20240318.git3b128b60`, so an ordinary
+   `apt upgrade` will not deliver the right blob. Copy it manually; see
+   [`proxmox/stage/install-egpu-fixes.sh`](proxmox/stage/install-egpu-fixes.sh).
+10. **A power-limited dock boot shows up as a PCIe link stuck at Gen1.** **[measured, 2026-11-09]**
+    With the DEG2's PSU fan/power switch in its limited position, the USB4 side negotiated fine
+    (gen 4, 2×2 lanes) while the PCIe hop under the host router never trained above Gen1 ×4:
+    ```
+    pci 0000:97:00.0: 8.000 Gb/s available PCIe bandwidth, limited by 2.5 GT/s PCIe x4 link
+              at 0000:66:03.0 (capable of 504.112 Gb/s with 32.0 GT/s PCIe x16 link)
+    ```
+    Check the whole chain, and check `max_link_speed` too — if the *max* also reads 2.5 GT/s the port
+    never trained at all, and there is no `retrain_link` knob to recover it:
+    ```bash
+    for d in $(readlink -f /sys/bus/pci/devices/0000:<GPU> | tr '/' '\n' | grep -E '^[0-9a-f]{4}:'); do
+      printf "%s cur=%s x%s max=%s x%s\n" $d "$(cat /sys/bus/pci/devices/$d/current_link_speed)" \
+        "$(cat /sys/bus/pci/devices/$d/current_link_width)" \
+        "$(cat /sys/bus/pci/devices/$d/max_link_speed)" \
+        "$(cat /sys/bus/pci/devices/$d/max_link_width)"; done
+    ```
+    Power the dock first, let it stabilise, then power the host.
+11. **A failed probe leaves the card driver-less, so you can re-test without rebooting.** **[measured]**
+    amdgpu module parameters are read-only at runtime and the module cannot be reloaded while the iGPU
+    drives the session, so option changes need a reboot — but after `probe failed -110` no driver is
+    bound, and a bare rebind re-runs the whole init in about a minute:
+    ```bash
+    echo 0000:<GPU> > /sys/bus/pci/drivers/amdgpu/bind
+    ```
+    Use it to separate a power/timing-dependent failure from a fixed one before spending reboots.
+    Related: do **not** trust `mes=0` copied from other people's guides. It is the kernel default
+    (`modinfo -F parm amdgpu` → `0 = disabled (default)`), so it is a no-op on any kernel.
 
 ---
 

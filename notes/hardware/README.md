@@ -17,7 +17,9 @@ LPDDR5x, dual 10GbE, 320 W built-in PSU, full-length slot wired as PCIe 4.0 x4.
 | [`r9700-egpu-report.md`](r9700-egpu-report.md) | You need the **full** R9700 + Strix Halo report: benchmarks, street prices, attach options, caveats. ~100 KB, sections §0–§9h. |
 | [`r9700-egpu-plan.md`](r9700-egpu-plan.md) | You want the research plan that produced the report above. |
 | [`v100-raw-analysis.md`](v100-raw-analysis.md) | You want the unedited transcript the decision doc was distilled from. Provenance only. |
+| [`deg2-oculink.md`](deg2-oculink.md) | Moving the DEG2 from its USB4/TB mode to native PCIe/OCuLink. Cutover runbook, bandwidth expectations, and the host-side riser part. |
 | [`proxmox/`](proxmox/README.md) | Setting up or restoring the Proxmox host and its Ubuntu VMs. |
+| [`proxmox/stage/`](proxmox/stage/) | Installable eGPU bring-up files: `install-egpu-fixes.sh` applies the gfx1201 firmware fix + amdgpu options, `rollback-egpu-fixes.sh` undoes it. |
 
 ## Conclusions worth keeping at hand
 
