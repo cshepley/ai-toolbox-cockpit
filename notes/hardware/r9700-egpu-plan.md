@@ -1,8 +1,8 @@
 # Research Plan: R9700 32 GB eGPU + Strix Halo (Minisforum MS-S1 Max)
 
-**Deliverable:** a single Markdown report + practical guide — `docs/R9700-eGPU-with-Strix-Halo-report.md`
-**Author context:** personal hardware project. Treat as a scratch doc (precedent:
-`V100_EGPU_DECISION_REPORT.md` is marked do-not-commit), and note that the R9700 material
+**Deliverable:** a single Markdown report + practical guide — [r9700-egpu-report.md](./r9700-egpu-report.md)
+**Author context:** personal hardware project. Treat as a scratch note (precedent:
+`v100-egpu-decision.md`), and note that the R9700 material
 already in `docs/` describes the project's own multi-card machine, not this box.
 
 ---

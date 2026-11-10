@@ -1,6 +1,6 @@
 # V100 / eGPU Upgrade Decision — Strix Halo (Minisforum MS-S1 Max)
 
-**Date:** 2026-11-07 · **Host:** Minisforum MS-S1 Max, Ryzen AI Max+ 395, 128 GB unified · **Status: scratch decision doc — not repo content, do not commit**
+**Date:** 2026-11-07 · **Host:** Minisforum MS-S1 Max, Ryzen AI Max+ 395, 128 GB unified · **Status: personal decision note — fork-only, never sent upstream**
 
 > Scope note: the R9700 in `docs/R9700_LLAMA.md` belongs to the multi-maintainer
 > repo's hardware, not this box. No spare Radeon card is on hand. This report is a
@@ -8,7 +8,7 @@
 
 > **Update 2026-11-07 (after this doc was written):** the R9700 was bought anyway, so
 > every "should I buy this" conclusion below is now historical. Two corrections worth
-> carrying forward, both in `docs/R9700-eGPU-with-Strix-Halo-report.md` §9h:
+> carrying forward, both in [r9700-egpu-report.md](./r9700-egpu-report.md) §9h:
 > (1) a V100 is **faster** at decode than the R9700 (900 vs 640 GB/s) — the R9700's
 > edge is a supported stack and FP8, not bandwidth; (2) Option 1's dismissal of SXM2
 > carriers as unproven is **outdated** — a dual-SXM2 NVLink board (~$700, 300 GB/s,

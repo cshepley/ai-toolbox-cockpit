@@ -6,3 +6,15 @@ __pycache__/
 dist/
 build/
 
+# Fork hygiene: never commit downloaded installer/packages by accident.
+# (An amdgpu-install .deb and a byte-identical .deb.1 copy were committed once;
+# both were removed. Re-download from AMD instead of vendoring.)
+*.deb
+*.deb.*
+*.rpm
+*.run
+*.iso
+*.tar.gz
+*.zip
+
+

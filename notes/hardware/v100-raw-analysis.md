@@ -1,10 +1,18 @@
-Before I write this up, five things actually change the recommendation — especially now that "external" is settled, since external changes the attach path more than the card choice. 
+# V100 / eGPU — raw analysis transcript
+
+> **Fork-only research note.** Unedited AI research transcript that fed
+> [v100-egpu-decision.md](./v100-egpu-decision.md). Kept for provenance; the
+> decision doc is the summary to read. Never part of upstream.
+
+---
+
+Before I write this up, five things actually change the recommendation — especially now that "external" is settled, since external changes the attach path more than the card choice.
 
 Analyzing your answers...
 
-Your answers settled it. Recording the durable findings, then the wrap-up. 
+Your answers settled it. Recording the durable findings, then the wrap-up.
 
-Created memory file 
+Created memory file
 
 ## Two findings that restructure your plan
 

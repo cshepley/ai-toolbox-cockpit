@@ -1,6 +1,6 @@
 # R9700 32 GB + Strix Halo (Minisforum MS-S1 Max) — Report & Guide
 
-**Written:** 2026-11-07 · **Plan:** [R9700-eGPU-with-Strix-Halo.md](./R9700-eGPU-with-Strix-Halo.md)
+**Written:** 2026-11-07 · **Plan:** [r9700-egpu-plan.md](./r9700-egpu-plan.md)
 **My box:** MS-S1 Max · Ryzen AI Max+ 395 · 128 GB unified · Minisforum DEG2 dock · Radeon AI PRO R9700 32 GB
 **Actual street cost paid:** MS-S1 Max 128 GB+2 TB **$4,199** · R9700 **$1,899** · DEG2 **$299** (PSU owned).
 All vendor prices in this report are same-day snapshots — read **§9c** before quoting any of them.
@@ -1093,7 +1093,7 @@ is now decided by someone else's model.
 
 ### 9h. Older used cards: 2× V100 32 GB vs one 48 GB card vs the R9700
 
-You already had this analysis — [`V100_EGPU_DECISION_REPORT.md`](../V100_EGPU_DECISION_REPORT.md) was written
+You already had this analysis — [v100-egpu-decision.md](./v100-egpu-decision.md) was written
 before the R9700 was bought, and it concluded a single V100 32 GB was the cheapest 900 GB/s available. That was
 right then. This section updates it now that the card is purchased, and **corrects one claim in it that new
 evidence has outdated.**
@@ -1342,7 +1342,7 @@ gain the best-documented configuration in this whole report.
   https://www.theregister.com/special-features/2025-01-27/nvidia-begins-deprecating-maxwell-pascal-volta-cards/665923
 - Shichinomiya, **dual Tesla V100 SXM2 NVLink carrier board tested** (~$700, 64 GB, NVLink 2.0 300 GB/s,
   PLX PEX8747/8749, one PCIe slot, vLLM benchmarks) — https://note.com/shichinomiya_s **[measured]** —
-  supersedes the "no published NVLink bandwidth from DIY carriers" line in `V100_EGPU_DECISION_REPORT.md`
+  supersedes the "no published NVLink bandwidth from DIY carriers" line in `v100-egpu-decision.md`
 - R9700 vs 2× V100 aggregated benchmark matrix (head-to-head on Flash-Next; read the capacity caveat in §9h) —
   https://www.diggtop.com/compare/radeon-ai-pro-r9700-vs-tesla-v100-x2 **[observed, aggregator]**
 
